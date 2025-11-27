@@ -1,0 +1,458 @@
+#Predictive Analytics (Group 9 Project)
+
+# Student Names:
+# Jason Lee, Fredrick Swingle Joshua Minami
+# Nityam Sharma, Soham Mukherjee, Neeyati Anand
+
+# Install Read Excel pkgs
+install.packages("readxl")
+
+# Load required packages
+library(caret)
+library(class)
+library(naivebayes)
+library(C50)   
+library(NeuralNetTools)
+library(fastDummies)
+library(kernlab)     
+library(arules)    
+library(readxl)
+set.seed(1947)
+
+#Importing provided Dataset 
+TFAData.df <- read_excel("People Analytics at Teach For America Data Set.xlsx")
+str(TFAData.df)
+
+# Check a few begining records from dataset
+head(TFAData.df)
+
+# New dataframe w/o unnecessary variables
+CleanedTFAData.df <- TFAData.df[ ,c("App Started Year (RTAT)", "Cumulative GPA",
+                                    "Is Math, Sci, or Eng Major Minor", "School Selectivity",
+                                     "Essay 1 Length", "Essay 2 Length", "Essay 3 Length", "Essays Unique Words",
+                                    "Essays Sentiment","Sign-up Date","Started Date", "Application Deadline", "Submitted Date", 
+                                    "Region Preference Level", "Attended Event",  "Completed Admissions Process")]
+head(CleanedTFAData.df)
+str(CleanedTFAData.df)
+
+
+
+
+# Days between signup and start
+CleanedTFAData.df$days_signup_to_start <- as.numeric(
+  difftime(CleanedTFAData.df$`Started Date`, CleanedTFAData.df$`Sign-up Date`, units = "days")
+)
+# Days between start and submit
+CleanedTFAData.df$days_start_to_submit <- as.numeric(
+  difftime(CleanedTFAData.df$`Submitted Date`, CleanedTFAData.df$`Started Date`, units = "days")
+)
+# Days between submit and deadline
+CleanedTFAData.df$days_submit_to_deadline <- as.numeric(
+  difftime(CleanedTFAData.df$`Application Deadline`, CleanedTFAData.df$`Submitted Date`, units = "days")
+)
+# Days between signup and submit
+CleanedTFAData.df$days_signup_to_submit <- as.numeric(
+  difftime(CleanedTFAData.df$`Submitted Date`, CleanedTFAData.df$`Sign-up Date`, units = "days")
+)
+
+# Average essay length
+CleanedTFAData.df$avg_essay_length <- rowMeans(CleanedTFAData.df[, c("Essay 1 Length", "Essay 2 Length", "Essay 3 Length")],
+  na.rm = TRUE
+)
+# Essay density → avg length per unique word
+CleanedTFAData.df$essay_density <- CleanedTFAData.df$avg_essay_length / (CleanedTFAData.df$`Essays Unique Words` + 1)
+# Top-choice region preference (focus on 1st choice → Convert others to zero)
+CleanedTFAData.df$region_pref_1 <- ifelse(CleanedTFAData.df$`Region Preference Level` == 1, 1, 0)
+# Submitted before deadline
+CleanedTFAData.df$submitted_before_deadline <- ifelse(CleanedTFAData.df$days_submit_to_deadline > 0, 1, 0)
+
+# Check the new variables
+summary(CleanedTFAData.df[, c("days_signup_to_start",
+                   "days_start_to_submit",
+                   "days_submit_to_deadline",
+                   "days_signup_to_submit",
+                   "avg_essay_length",
+                   "essay_density",
+                   "region_pref_1",
+                   "submitted_before_deadline")])
+
+head(CleanedTFAData.df[, c("Sign-up Date","Started Date","Submitted Date","Application Deadline",
+                "days_signup_to_start","days_start_to_submit","days_submit_to_deadline",
+                "avg_essay_length","essay_density","region_pref_1","submitted_before_deadline")])
+
+# Factorize Categorical Variables
+CleanedTFAData.df$`App Started Year (RTAT)` <- as.factor(CleanedTFAData.df$`App Started Year (RTAT)`)
+CleanedTFAData.df$`Is Math, Sci, or Eng Major Minor` <- as.factor(CleanedTFAData.df$`Is Math, Sci, or Eng Major Minor`)
+CleanedTFAData.df$`Region Preference Level` <- as.factor(CleanedTFAData.df$`Region Preference Level`)
+CleanedTFAData.df$`Attended Event` <- as.factor(CleanedTFAData.df$`Attended Event`)
+CleanedTFAData.df$region_pref_1 <- as.factor(CleanedTFAData.df$region_pref_1)
+CleanedTFAData.df$submitted_before_deadline <- as.factor(CleanedTFAData.df$submitted_before_deadline)
+CleanedTFAData.df$`School Selectivity` <- as.factor(CleanedTFAData.df$`School Selectivity`)
+CleanedTFAData.df$`Completed Admissions Process`<- as.factor(CleanedTFAData.df$`Completed Admissions Process`)
+
+
+#Scale Data
+CleanedTFAData.df[sapply(CleanedTFAData.df, is.numeric)] <-
+  scale(CleanedTFAData.df[sapply(CleanedTFAData.df, is.numeric)])
+str(CleanedTFAData.df)
+
+
+
+
+### Model: KNN
+# Predictive Variables
+Pred_Variables <- c("Cumulative GPA",
+                    "School Selectivity",
+                    "Is Math, Sci, or Eng Major Minor",
+                    "Essays Sentiment",
+                    "avg_essay_length", "essay_density",
+                    "days_signup_to_start", "days_start_to_submit",
+                    "days_submit_to_deadline", "days_signup_to_submit",
+                    "Attended Event", "region_pref_1",
+                    "submitted_before_deadline", "Region Preference Level")
+
+# Revert target variable back to simple 0/1 factor (not scaled)
+CleanedTFAData.df$`Completed Admissions Process` <- as.factor(TFAData.df$`Completed Admissions Process`)
+
+# 80/20 stratified split
+idx <- createDataPartition(y = CleanedTFAData.df$`Completed Admissions Process`, 
+                           p = 0.8, list = FALSE)
+
+# Training and testing sets
+train.df <- CleanedTFAData.df[idx, Pred_Variables]
+test.df  <- CleanedTFAData.df[-idx, Pred_Variables]
+
+# Labels for train/test
+train_labels <- CleanedTFAData.df$`Completed Admissions Process`[idx]
+test_labels  <- CleanedTFAData.df$`Completed Admissions Process`[-idx]
+
+# Convert all factor columns in train/test to numeric
+train.df[] <- lapply(train.df, function(x) if(is.factor(x)) as.numeric(x) else x)
+test.df[]  <- lapply(test.df,  function(x) if(is.factor(x)) as.numeric(x) else x)
+
+
+
+
+# Check label distribution (in proportion)
+proportions(table(train_labels))
+proportions(table(CleanedTFAData.df$`Completed Admissions Process`))
+
+# Knn → K = 4
+Knn_K <- knn(train = train.df, test = test.df, cl = train_labels, k = 4)
+confusionMatrix(Knn_K, factor(test_labels), positive = "1")
+
+
+#####Create 10 folds#####
+CleanedCabData.folds <- createFolds(CleanedTFAData.df$`Completed Admissions Process`, k = 10)
+str(CleanedCabData.folds) #View 10 folds
+#Cross-Validation → (80% train | 20% test)
+Knn_K_results <- lapply(CleanedCabData.folds, function(x){
+  train.df
+  test.df
+  confusionMatrix(Knn_K, factor(test_labels), positive = "1")
+  sns <- sensitivity(factor(test_labels), Knn_K)
+  return(sns)
+})
+str(Knn_K_results)
+mean(unlist(Knn_K_results))
+
+
+
+### Model: Naive Bayes
+## Train Naive Bayes Model | 80/20 partition 
+NB_TrainData <- CleanedTFAData.df[idx, ]
+NB_TestData  <- CleanedTFAData.df[-idx, ]
+
+# Check proportions to confirm stratified split
+proportions(table(CleanedTFAData.df$`Completed Admissions Process`))
+proportions(table(NB_TrainData$`Completed Admissions Process`))
+proportions(table(NB_TestData$`Completed Admissions Process`))
+
+## Train Naive Bayes model
+model_nb <- train(`Completed Admissions Process` ~ 
+                    `Cumulative GPA` + `School Selectivity` + 
+                    `Is Math, Sci, or Eng Major Minor` + `Essays Sentiment` +
+                    avg_essay_length + essay_density +
+                    days_signup_to_start + days_start_to_submit +
+                    days_submit_to_deadline + days_signup_to_submit +
+                    `Attended Event` + region_pref_1 +
+                    submitted_before_deadline + `Region Preference Level`,
+                  data = NB_TrainData,
+                  method = "naive_bayes",
+                  trControl = trainControl(method = "cv", number = 10))
+
+# Predictions
+predictions_NB <- predict(model_nb, NB_TestData)
+# Confusion matrix
+confusionMatrix(predictions_NB, NB_TestData$`Completed Admissions Process`, positive = "1")
+# View model summary
+print(model_nb)
+
+## Naive Bayes - TuneGrid
+# Get tuning parameters
+modelLookup('naive_bayes')
+
+# Define tuning grid
+NBtune_grid <- expand.grid(
+  laplace = c(0, 0.5, 1, 1.5), 
+  usekernel = c(TRUE, FALSE),
+  adjust = seq(0.3, 3, 0.3)  
+)
+
+model_nb_tuned <- train(`Completed Admissions Process` ~ 
+                    `Cumulative GPA` + `School Selectivity` + 
+                    `Is Math, Sci, or Eng Major Minor` + `Essays Sentiment` +
+                    avg_essay_length + essay_density +
+                    days_signup_to_start + days_start_to_submit +
+                    days_submit_to_deadline + days_signup_to_submit +
+                    `Attended Event` + region_pref_1 +
+                    submitted_before_deadline + `Region Preference Level`,
+                  data = NB_TrainData,
+                  method = "naive_bayes",
+                  tuneGrid = NBtune_grid,
+                  trControl = trainControl(method = "cv", number = 10))
+
+# Predictions
+predictions_NB_Tuned <- predict(model_nb_tuned, NB_TestData)
+# Confusion matrix
+confusionMatrix(predictions_NB_Tuned, NB_TestData$`Completed Admissions Process`, positive = "1")
+# View model summary
+print(predictions_NB_Tuned)
+
+
+
+
+### Model: Decision Tree (C5.0)
+## Train Decision Tree model | 80/20 partition
+DT_TrainData <- CleanedTFAData.df[idx, ]
+DT_TestData  <- CleanedTFAData.df[-idx, ]
+
+# Check proportions (confirm stratified sampling worked)
+proportions(table(CleanedTFAData.df$`Completed Admissions Process`))
+proportions(table(DT_TrainData$`Completed Admissions Process`))
+proportions(table(DT_TestData$`Completed Admissions Process`))
+
+# Base Decision Tree (C5.0) with 10-fold CV | TuneLength
+DT_model <- train(
+  `Completed Admissions Process` ~ 
+    `Cumulative GPA` + `School Selectivity` +
+    `Is Math, Sci, or Eng Major Minor` + `Essays Sentiment` +
+    avg_essay_length + essay_density +
+    days_signup_to_start + days_start_to_submit +
+    days_submit_to_deadline + days_signup_to_submit +
+    `Attended Event` + region_pref_1 +
+    submitted_before_deadline + `Region Preference Level`,
+  data = DT_TrainData,
+  method = "C5.0",
+  trControl = trainControl(method = "cv", number = 10),
+  tuneLength = 10
+)
+
+# View model performance
+DT_model
+# Predictions on test data
+Predictions_DT <- predict(DT_model, newdata = DT_TestData)
+# Confusion Matrix
+confusionMatrix(Predictions_DT, DT_TestData$`Completed Admissions Process`, positive = "1")
+
+
+
+
+
+# Decision Tree (C5.0) with 10-fold CV | TuneGrid
+# Define tuning grid
+DT_Grid <- expand.grid(
+  model = c("tree", "rules"),
+  winnow = c(TRUE, FALSE), 
+  trials = c(1, 5, 10, 15, 20) 
+)
+
+DT_model_tuned <- train(
+  `Completed Admissions Process` ~ 
+    `Cumulative GPA` + `School Selectivity` +
+    `Is Math, Sci, or Eng Major Minor` + `Essays Sentiment` +
+    avg_essay_length + essay_density +
+    days_signup_to_start + days_start_to_submit +
+    days_submit_to_deadline + days_signup_to_submit +
+    `Attended Event` + region_pref_1 +
+    submitted_before_deadline + `Region Preference Level`,
+  data = DT_TrainData,
+  method = "C5.0",
+  trControl = trainControl(method = "cv", number = 10),
+  tuneGrid = DT_Grid
+)
+
+# View tuning results
+DT_model_tuned
+DT_model_tuned$bestTune
+
+# Predictions for tuned model
+Predictions_DT_tuned <- predict(DT_model_tuned, newdata = DT_TestData)
+confusionMatrix(Predictions_DT_tuned, DT_TestData$`Completed Admissions Process`, positive = "1")
+
+
+
+
+
+### Model: SVM (radial kernel) 
+# Convert to Categorical Variables to Dummy Variables - Don not drop first dummy!
+SVMctr_data <- dummy_cols(CleanedTFAData.df,
+              select_columns = c("School Selectivity",
+                                 "Is Math, Sci, or Eng Major Minor",
+                                 "Attended Event",
+                                 "region_pref_1",
+                                 "submitted_before_deadline",
+                                 "Region Preference Level"),
+                                remove_first_dummy = FALSE,)
+
+# Normalize names so spaces become dots in formulas
+names(SVMctr_data) <- make.names(names(SVMctr_data))
+str(SVMctr_data)
+
+# Train SVM model 
+SVM_TrainData <- SVMctr_data[idx,]
+SVM_TestData  <- SVMctr_data[-idx,]
+
+# SVM with radial kernel - TuneLength
+SVM_model <- train(Completed.Admissions.Process ~
+                     Cumulative.GPA + Essays.Sentiment +
+                     avg_essay_length + essay_density +
+                     days_signup_to_start + days_start_to_submit +
+                     days_submit_to_deadline + days_signup_to_submit +
+                     School.Selectivity_least_selective +
+                     School.Selectivity_less_selective +
+                     School.Selectivity_more_selective +
+                     School.Selectivity_most_selective +
+                     Is.Math..Sci..or.Eng.Major.Minor_0 +
+                     Is.Math..Sci..or.Eng.Major.Minor_1 +
+                     Attended.Event_0 + Attended.Event_1 +
+                     region_pref_1_0 + region_pref_1_1 +
+                     submitted_before_deadline_0 + submitted_before_deadline_1 +
+                     Region.Preference.Level_1 + Region.Preference.Level_2 + Region.Preference.Level_3,
+                   data = SVM_TrainData,
+                   method = "svmRadial",
+                   trControl = trainControl(method = "cv", number = 3),
+                   preProcess = c("center", "scale"),
+                   tuneLength = 3)
+
+# View model performance
+SVM_model
+# Predictions on test data
+confusionMatrix(predict(SVM_model, SVM_TestData),
+                SVM_TestData$Completed.Admissions.Process,
+                positive = "1")
+
+
+# SVM with radial kernel - TuneGrid
+SVM_grid <- expand.grid(
+  sigma = c(0.02, 0.03, 0.0367, 0.045),
+  C     = c(0.5, 1, 2))
+
+SVM_model_Tuned <- train(Completed.Admissions.Process ~
+                           Cumulative.GPA + Essays.Sentiment +
+                           avg_essay_length + essay_density +
+                           days_signup_to_start + days_start_to_submit +
+                           days_submit_to_deadline + days_signup_to_submit +
+                           School.Selectivity_least_selective +
+                           School.Selectivity_less_selective +
+                           School.Selectivity_more_selective +
+                           School.Selectivity_most_selective +
+                           Is.Math..Sci..or.Eng.Major.Minor_0 +
+                           Is.Math..Sci..or.Eng.Major.Minor_1 +
+                           Attended.Event_0 + Attended.Event_1 +
+                           region_pref_1_0 + region_pref_1_1 +
+                           submitted_before_deadline_0 + submitted_before_deadline_1 +
+                           Region.Preference.Level_1 + Region.Preference.Level_2 + Region.Preference.Level_3,
+                          data = SVM_TrainData,
+                          method = "svmRadial",
+                          trControl = trainControl(method = "cv", number = 3),
+                          preProcess = c("center", "scale"),
+                          tuneGrid = SVM_grid)
+
+# Tuned results and confusion matrix
+SVM_model_Tuned
+SVM_model_Tuned$bestTune
+
+confusionMatrix(predict(SVM_model_Tuned, SVM_TestData),
+                SVM_TestData$Completed.Admissions.Process,
+                positive = "1")
+
+
+
+
+### Model: ANN - TuneLength
+## Reuse SVM data for ANN
+ANN_TrainData <- SVM_TrainData
+ANN_TestData  <- SVM_TestData
+## Baseline ANN model
+ANN_model <- train(Completed.Admissions.Process ~
+                           Cumulative.GPA + Essays.Sentiment +
+                           avg_essay_length + essay_density +
+                           days_signup_to_start + days_start_to_submit +
+                           days_submit_to_deadline + days_signup_to_submit +
+                           School.Selectivity_least_selective +
+                           School.Selectivity_less_selective +
+                           School.Selectivity_more_selective +
+                           School.Selectivity_most_selective +
+                           Is.Math..Sci..or.Eng.Major.Minor_0 +
+                           Is.Math..Sci..or.Eng.Major.Minor_1 +
+                           Attended.Event_0 + Attended.Event_1 +
+                           region_pref_1_0 + region_pref_1_1 +
+                           submitted_before_deadline_0 + submitted_before_deadline_1 +
+                           Region.Preference.Level_1 + Region.Preference.Level_2 + Region.Preference.Level_3,
+                        data = ANN_TrainData,
+                        method = "nnet",
+                        metric = "Kappa", 
+                        maxit = 300,
+                        trControl = trainControl(method = "cv", number = 5),
+                        preProcess = c("center", "scale"),
+                        tuneLength = 7,
+                        trace = FALSE)
+
+# View model performance
+ANN_model
+# Predictions on test data
+confusionMatrix(predict(ANN_model, ANN_TestData),
+                ANN_TestData$Completed.Admissions.Process,
+                positive = "1")
+
+
+### Model: ANN - TuneGrid
+# Get tuning parameters
+modelLookup("nnet")
+ANN_model_tuned <- train(Completed.Admissions.Process ~
+                           Cumulative.GPA + Essays.Sentiment +
+                           avg_essay_length + essay_density +
+                           days_signup_to_start + days_start_to_submit +
+                           days_submit_to_deadline + days_signup_to_submit +
+                           School.Selectivity_least_selective +
+                           School.Selectivity_less_selective +
+                           School.Selectivity_more_selective +
+                           School.Selectivity_most_selective +
+                           Is.Math..Sci..or.Eng.Major.Minor_0 +
+                           Is.Math..Sci..or.Eng.Major.Minor_1 +
+                           Attended.Event_0 + Attended.Event_1 +
+                           region_pref_1_0 + region_pref_1_1 +
+                           submitted_before_deadline_0 + submitted_before_deadline_1 +
+                           Region.Preference.Level_1 + Region.Preference.Level_2 + Region.Preference.Level_3,
+                         data = ANN_TrainData,
+                         method = "nnet",
+                         metric = "Kappa", 
+                         maxit = 500,
+                         trControl = trainControl(method = "cv", number = 10),
+                         preProcess = c("center", "scale"),
+                         tuneGrid = expand.grid(
+                                    size = seq(7, 15, 2) ,
+                                    decay = seq(0.001, 0.01, 0.003)),
+                         trace = FALSE)
+
+## See which size/decay was chosen
+ANN_model_tuned$bestTune
+# Predictions on test data
+confusionMatrix(predict(ANN_model_tuned, ANN_TestData),
+                ANN_TestData$Completed.Admissions.Process,
+                positive = "1")
+
+
+
+
