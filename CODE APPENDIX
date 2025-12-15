@@ -1,8 +1,5 @@
-#Predictive Analytics (Group 9 Project)
+#Predictive Analytics 
 
-# Student Names:
-# Jason Lee, Fredrick Swingle Joshua Minami
-# Nityam Sharma, Soham Mukherjee, Neeyati Anand
 
 # Install Read Excel pkgs
 install.packages("readxl")
